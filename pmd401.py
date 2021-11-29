@@ -101,6 +101,11 @@ class Client:
 
         return int(reply.decode())
 
+    def stop_movement(self, channel_num: int):
+        cmd = f"{self._get_command_prefix(channel_num)}S;"
+        print(f"STOP {channel_num=} {cmd=}")
+        self._send(cmd.encode())
+
     def arbitrary_ask(self, message: str) -> str:
         message += "\n"
         self._send(message.encode())
@@ -121,26 +126,30 @@ class PMD401(Device):
         # self._client is used in init_device(), thus needs to be
         # created before calling super constructor
         self._client = Client()
+        self._channels = []
         super().__init__(*args, **kwargs)
 
     def init_device(self):
         print("init_device()")
-        # This is necessary before use the properties.
-        self.get_device_properties()
+        self._check_properties()
 
         self._client.reconnect(self.host, self.port)
 
-        for channel_num in self._client.get_channel_nums():
+        self._channels = list(self._client.get_channel_nums())
+
+        for channel_num in self._channels:
             self._client.configure_encoder(channel_num)
             self._create_channel_attributes(channel_num)
 
-    @command(dtype_in=str, dtype_out=str)
-    def ArbitraryAsk(self, message):
-        return self._client.arbitrary_ask(message)
+    def _check_properties(self):
+        # This is necessary before use the properties.
+        self.get_device_properties()
 
-    @command(dtype_in=str)
-    def ArbitrarySend(self, message):
-        return self._client.arbitrary_send(message)
+        if self.host is None:
+            assert False, "no 'host' property specified"
+
+        if self.port is None:
+            assert False, "no 'port' property specified"
 
     def _create_channel_attributes(self, channel_num: int):
         """
@@ -183,6 +192,23 @@ class PMD401(Device):
     def _get_channel_encoder(self, attr):
         channel_num = self._get_attr_channel_num(attr)
         attr.set_value(self._client.get_encoder_position(channel_num))
+
+    #
+    # Commands
+    #
+
+    @command(dtype_in=str, dtype_out=str)
+    def ArbitraryAsk(self, message):
+        return self._client.arbitrary_ask(message)
+
+    @command(dtype_in=str)
+    def ArbitrarySend(self, message):
+        self._client.arbitrary_send(message)
+
+    @command
+    def StopAll(self):
+        for channel_num in self._channels:
+            self._client.stop_movement(channel_num)
 
 
 PMD401.run_server()
