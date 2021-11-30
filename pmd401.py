@@ -103,7 +103,6 @@ class Client:
 
     def stop_movement(self, channel_num: int):
         cmd = f"{self._get_command_prefix(channel_num)}S;"
-        print(f"STOP {channel_num=} {cmd=}")
         self._send(cmd.encode())
 
     def arbitrary_ask(self, message: str) -> str:
