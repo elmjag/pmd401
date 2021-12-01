@@ -1,37 +1,33 @@
 #!/usr/bin/env python3
 from typing import Iterable
-import socket
+import atexit
 import time
 import tango
 from tango import DevLong, AttrWriteType
 from tango.server import Device, device_property, command
+from lazy_sock import LazyTCPSocket
+
+
+TCP_DISCONNECT_TIMEOUT = 60
 
 
 class Client:
     # Y13 command's value for configuring 'BiSS 32-bit' encoder mode
     Y13_BiSS_32bit = "6"
 
-    def __init__(self):
-        self.sock = None
+    def __init__(self, host, port):
+        self.sock = LazyTCPSocket(host, port, TCP_DISCONNECT_TIMEOUT)
 
-    def reconnect(self, host, port):
-        if self.sock is not None:
-            assert False, "disconecting not implemented"
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-        # TODO handle ConnectionRefusedError exception
-        print(f"connecting to {host}:{port}")
-        self.sock.connect((host, port))
+    def teardown(self):
+        self.sock.teardown()
 
     def _send(self, cmd: bytes):
         assert self.sock is not None
-        print(f"TCP > {cmd}")
         self.sock.sendall(cmd)
 
     def _recv(self) -> bytes:
         assert self.sock is not None
         reply = self.sock.recv(4096)
-        print(f"TCP < {reply}")
         return reply
 
     def _recv_until(self, end: bytes) -> bytes:
@@ -122,18 +118,24 @@ class PMD401(Device):
     port = device_property(dtype=int)
 
     def __init__(self, *args, **kwargs):
-        # self._client is used in init_device(), thus needs to be
-        # created before calling super constructor
-        self._client = Client()
+        # create fields before calling super constructor,
+        # as they are accessed in init_device()
+        # which will be invoked by the super constructor
+        self._client = None
         self._channels = []
         super().__init__(*args, **kwargs)
+        atexit.register(self._reset)
+
+    def _reset(self):
+        if self._client:
+            self._client.teardown()
 
     def init_device(self):
         print("init_device()")
+        self._reset()
         self._check_properties()
 
-        self._client.reconnect(self.host, self.port)
-
+        self._client = Client(self.host, self.port)
         self._channels = list(self._client.get_channel_nums())
 
         for channel_num in self._channels:
@@ -179,6 +181,10 @@ class PMD401(Device):
         num = attr_name[attr_prefix_len : attr_prefix_len + 2]
         return int(num)
 
+    #
+    # Attributes
+    #
+
     def _get_channel_position(self, attr):
         channel_num = self._get_attr_channel_num(attr)
         attr.set_value(self._client.get_target_position(channel_num))
@@ -210,4 +216,5 @@ class PMD401(Device):
             self._client.stop_movement(channel_num)
 
 
-PMD401.run_server()
+if __name__ == "__main__":
+    PMD401.run_server()
