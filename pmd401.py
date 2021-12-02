@@ -6,16 +6,15 @@ import tango
 from tango import DevString, DevLong, AttrWriteType
 from tango.server import Device, device_property, command
 from lazy_sock import LazyTCPSocket
-from dataclasses import dataclass
 
 
 TCP_DISCONNECT_TIMEOUT = 60
 
 
-@dataclass
 class ControllerState:
-    alarm: bool
-    running: bool
+    def __init__(self, alarm, running):
+        self.alarm = alarm
+        self.running = running
 
 
 class Client:
@@ -133,7 +132,7 @@ class Client:
         # check 'd4' if the motor is running
         running = (d4 & 0x1) == 1
 
-        print(f"{d1=} {alarm=} {d4=} {running=}")
+        print(f"d1: {d1} alarm: {alarm} d4: {d4} running: {running}")
 
         return ControllerState(alarm, running)
 
