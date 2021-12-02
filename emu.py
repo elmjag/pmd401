@@ -16,6 +16,7 @@ class Channel:
     def __init__(self, encoder_position: int, target_position: int):
         self.encoder_position = encoder_position
         self.target_position = target_position
+        self.reverse = False
         self._lock = Lock()
 
     def __enter__(self):
@@ -39,7 +40,7 @@ class Command:
     suppress_response: bool
 
 
-COMMAND_RE = re.compile(r"^X(\?|\d*)([ETY].*)?([;\n\r])$")
+COMMAND_RE = re.compile(r"^X(\?|\d*)([ETYU].*)?([;\n\r])$")
 
 
 def motor_ticker(controller: Controller):
@@ -47,7 +48,14 @@ def motor_ticker(controller: Controller):
         if channel.target_position == channel.encoder_position:
             # at target position, no need to move anything
             return
-        delta = 1 if channel.target_position > channel.encoder_position else -1
+
+        if channel.target_position > channel.encoder_position:
+            delta = 1
+            channel.reverse = False
+        else:
+            delta = -1
+            channel.reverse = True
+
         channel.encoder_position += delta
 
     while True:
@@ -141,6 +149,26 @@ def _config_encoder_cmd(command: Command):
     return reply.encode()
 
 
+def _controller_status0_cmd(command: Command, controller: Controller):
+    """
+    emulate 'U0' command
+    """
+    with controller.channels[int(command.channel)] as channel:
+        running = channel.target_position != channel.encoder_position
+        reverse = channel.reverse
+
+    print(f"{running=} {reverse=}")
+    d4 = 0
+    if reverse:
+        d4 += 2
+
+    if running:
+        d4 += 1
+
+    reply = f"X{command.channel}U0:000{d4}\r"
+    return reply.encode()
+
+
 def _handle_command(connection, line, controller: Controller):
     command = _parse_command(line)
     print(f"{command=}")
@@ -157,6 +185,8 @@ def _handle_command(connection, line, controller: Controller):
         reply = _encode_position_cmd(command, controller)
     elif command.name == "Y13":
         reply = _config_encoder_cmd(command)
+    elif command.name == "U0":
+        reply = _controller_status0_cmd(command, controller)
     else:
         reply = b"wat?\n"
 

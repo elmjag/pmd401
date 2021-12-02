@@ -3,12 +3,19 @@ from typing import Iterable
 import atexit
 import time
 import tango
-from tango import DevLong, AttrWriteType
+from tango import DevString, DevLong, AttrWriteType
 from tango.server import Device, device_property, command
 from lazy_sock import LazyTCPSocket
+from dataclasses import dataclass
 
 
 TCP_DISCONNECT_TIMEOUT = 60
+
+
+@dataclass
+class ControllerState:
+    alarm: bool
+    running: bool
 
 
 class Client:
@@ -97,6 +104,39 @@ class Client:
 
         return int(reply.decode())
 
+    def get_controller_status(self, channel_num: int) -> ControllerState:
+        #
+        # do the 'U0' command
+        #
+        def _get_d1d4():
+            """
+            get d1 and d4 values from b'NNNN'
+            """
+            text = reply.decode()
+            d1 = int(text[0])
+            d4 = int(text[3])
+
+            return d1, d4
+
+        cmd_prefix = self._get_command_prefix(channel_num)
+        cmd = f"{cmd_prefix}U0\n"
+        self._send(cmd.encode())
+
+        reply = self._recv_until(b"\r")
+        reply = reply[len(cmd_prefix) + 3 : -1]
+
+        d1, d4 = _get_d1d4()
+
+        # check 'd1' if any error bits are set
+        alarm = d1 != 0
+
+        # check 'd4' if the motor is running
+        running = (d4 & 0x1) == 1
+
+        print(f"{d1=} {alarm=} {d4=} {running=}")
+
+        return ControllerState(alarm, running)
+
     def stop_movement(self, channel_num: int):
         cmd = f"{self._get_command_prefix(channel_num)}S;"
         self._send(cmd.encode())
@@ -168,6 +208,11 @@ class PMD401(Device):
         )
         self.add_attribute(attr, self._get_channel_encoder)
 
+        attr = tango.Attr(
+            f"channel{channel_num:02}_state", DevString, AttrWriteType.READ,
+        )
+        self.add_attribute(attr, self._get_channel_state)
+
     @staticmethod
     def _get_attr_channel_num(attr) -> int:
         """
@@ -197,6 +242,21 @@ class PMD401(Device):
     def _get_channel_encoder(self, attr):
         channel_num = self._get_attr_channel_num(attr)
         attr.set_value(self._client.get_encoder_position(channel_num))
+
+    def _get_channel_state(self, attr):
+        channel_num = self._get_attr_channel_num(attr)
+        ctrl_status = self._client.get_controller_status(channel_num)
+
+        print(ctrl_status)
+
+        if ctrl_status.alarm:
+            status = "alarm"
+        elif ctrl_status.running:
+            status = "running"
+        else:
+            status = "stationary"
+
+        attr.set_value(status)
 
     #
     # Commands
